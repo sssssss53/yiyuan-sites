@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>一元机场 | 极速·稳定·隐逸如墨</title>
+  
+  <script src="https://cdn.staticfile.net/tailwindcss/3.4.1/cdn.min.js"></script>
+  <script src="https://cdn.staticfile.net/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdn.staticfile.net/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://cdn.staticfile.net/babel-standalone/7.23.10/babel.min.js"></script>
+
+  <style>
+    body { margin: 0; padding: 0; font-family: serif; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f4f4ec; font-family: serif; font-size: 1.2rem; color: #334155;">
+      <div style="width: 32px; height: 32px; border: 4px solid #cbd5e1; border-top: 4px solid #8b1515; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 16px;"></div>
+      研墨中... (正在初始化)
+      <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
+    </div>
+  </div>
+
+  <script type="text/babel" data-type="module">
+    // 使用 jsdelivr CDN 确保图标库加载
+    import * as Lucide from 'https://cdn.jsdelivr.net/npm/lucide-react@0.292.0/dist/esm/lucide-react.js';
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+    import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, arrayUnion } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+    const { useState, useEffect } = React;
+    const { Plane, Shield, Globe, Check, QrCode, Monitor, Mail, LogOut, Send, AlertCircle, Key, UserPlus, LogIn, Lock, Fingerprint, Headset, MessageCircle, X } = Lucide;
+
+    // --- 安全的 Firebase 初始化 (防崩溃设计) ---
+    let app, auth, db;
+    let isFirebaseReady = false;
+
+    try {
+      const firebaseConfig = {
+          // ⚠️ 如果您有了真实的配置，填在这里。没填的话也不会卡死了！
+          apiKey: "替换为您的_API_KEY",
+          authDomain: "替换为您的_AUTH_DOMAIN",
+          projectId: "替换为您的_PROJECT_ID",
+          storageBucket: "替换为您的_STORAGE_BUCKET",
+          messagingSenderId: "替换为您的_MESSAGING_SENDER_ID",
+          appId: "替换为您的_APP_ID"
+      };
+      
+      // 如果不是占位符，才去初始化
+      if (!firebaseConfig.apiKey.includes("替换")) {
+          app = initializeApp(firebaseConfig);
+          auth = getAuth(app);
+          db = getFirestore(app);
+          isFirebaseReady = true;
+      } else {
+          console.warn("未检测到有效数据库配置，进入纯UI演示模式");
+      }
+    } catch (error) {
+      console.error("数据库初始化错误，强行进入演示模式", error);
+    }
+
+    const appId = 'yiyuan-airport-custom';
+
+    // ==========================================
+    // 核心应用组件
+    // ==========================================
+    function App() {
+      const [fbUser, setFbUser] = useState(null);
+      const [currentView, setCurrentView] = useState('login'); 
+      const [currentUserEmail, setCurrentUserEmail] = useState('');
+      const [userData, setUserData] = useState(null);
+      const [allUsers, setAllUsers] = useState([]);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        // 如果没有数据库，直接关掉加载动画，显示网页！
+        if (!isFirebaseReady) {
+          setTimeout(() => {
+            setLoading(false);
+            alert("【站长请注意】\n\n系统未检测到真实的 Firebase 数据库配置。\n为了防止网页卡死，已自动为您进入【UI展示模式】。\n\n您可以自由浏览网页和后台界面，但暂不能进行真实的注册和登录。");
+          }, 1000);
+          return;
+        }
+
+        // 有数据库的情况
+        const initAuth = async () => {
+          try {
+            await signInAnonymously(auth);
+          } catch (err) {
+            console.warn("网络连接数据库超时");
+            setLoading(false);
+          }
+        };
+        initAuth();
+
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+          setFbUser(user);
+          setLoading(false);
+        });
+
+        const timeout = setTimeout(() => {
+          if (loading) setLoading(false);
+        }, 5000);
+
+        return () => {
+          unsubscribe();
+          clearTimeout(timeout);
+        };
+      }, [loading]);
+
+      // 监听数据逻辑 (有数据库时才执行)
+      useEffect(() => {
+        if (!isFirebaseReady || !fbUser) return;
+
+        let unsubUser = () => {};
+        let unsubAll = () => {};
+
+        if (currentView === 'user' && currentUserEmail) {
+          const docId = currentUserEmail.replace(/@/g, '_at_').replace(/\./g, '_dot_');
+          const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'yiyuan_users', docId);
+          unsubUser = onSnapshot(userRef, (docSnap) => {
+            if (docSnap.exists()) setUserData(docSnap.data());
+          });
+        }
+
+        if (currentView === 'admin') {
+          const usersCol = collection(db, 'artifacts', appId, 'public', 'data', 'yiyuan_users');
+          unsubAll = onSnapshot(usersCol, (snapshot) => {
+            const users = [];
+            snapshot.forEach((doc) => users.push({ id: doc.id, ...doc.data() }));
+            setAllUsers(users.sort((a, b) => new Date(b.registerTime) - new Date(a.registerTime)));
+          });
+        }
+
+        return () => { unsubUser(); unsubAll(); };
+      }, [fbUser, currentView, currentUserEmail]);
+
+      if (loading) {
+        return <div className="min-h-screen flex flex-col items-center justify-center bg-[#f4f4ec] text-slate-800 font-serif">
+            <div className="w-8 h-8 border-4 border-slate-300 border-t-[#8b1515] rounded-full animate-spin mb-4"></div>
+            研墨中...
+        </div>;
+      }
+
+      return (
+        <div className="min-h-screen font-serif text-slate-800 relative bg-[#e3e1d9]">
+          <div 
+            className="fixed inset-0 z-0 pointer-events-none opacity-[0.35]"
+            style={{
+              backgroundImage: "url('https://api.dujin.org/bing/1920.php')", 
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              filter: 'grayscale(80%) sepia(20%)'
+            }}
+          ></div>
+
+          <div className="relative z-10">
+            {currentView === 'login' && (
+              <LoginView 
+                onLogin={(email) => {
+                  setCurrentUserEmail(email);
+                  setCurrentView('user');
+                }} 
+                onGoAdmin={() => setCurrentView('admin')}
+                isDemo={!isFirebaseReady}
+              />
+            )}
+            
+            {currentView === 'user' && (
+              <UserDashboard 
+                email={currentUserEmail} 
+                userData={userData}
+                onLogout={() => {
+                  setCurrentUserEmail('');
+                  setUserData(null);
+                  setCurrentView('login');
+                }}
+                isDemo={!isFirebaseReady}
+              />
+            )}
+
+            {currentView === 'admin' && (
+              <AdminDashboard 
+                users={allUsers}
+                onExit={() => setCurrentView('login')}
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 1. 登录/注册页面
+    // ==========================================
+    function LoginView({ onLogin, onGoAdmin, isDemo }) {
+      const [mode, setMode] = useState('login'); 
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [verCodeInput, setVerCodeInput] = useState('');
+      const [isCodeSent, setIsCodeSent] = useState(false);
+      const [error, setError] = useState('');
+
+      const [showAdminModal, setShowAdminModal] = useState(false);
+      const [adminPwd, setAdminPwd] = useState('');
+
+      const validDomains = ['@gmail.com', '@qq.com', '@foxmail.com', '@163.com'];
+
+      const handleSendCode = async () => {
+        setError('');
+        if (!email) return setError('请先填写邮箱地址');
+        if (!validDomains.some(d => email.toLowerCase().endsWith(d))) return setError('仅支持谷歌、QQ、Foxmail、163邮箱');
+
+        if (isDemo) {
+            setIsCodeSent(true);
+            return alert(`【UI展示模式】\n验证码已模拟发送至 ${email}\n（请随意填写即可）`);
+        }
+
+        try {
+          const docId = email.replace(/@/g, '_at_').replace(/\./g, '_dot_');
+          const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'yiyuan_users', docId);
+          const snap = await getDoc(userRef);
+          if (snap.exists() && snap.data().status === 'registered') return setError('该邮箱已被注册，请直接登录');
+
+          setIsCodeSent(true);
+          await setDoc(userRef, { email, status: 'verifying', plan: null, paymentStatus: 'none', nodes: null, registerTime: new Date().toISOString() }, { merge: true });
+          alert(`【系统模拟邮件】\n验证码已发送至 ${email}`);
+        } catch (err) {
+          setError('发送失败，请确保后台配置正确且网络畅通');
+        }
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!email || !password) return setError('请输入邮箱和密码');
+        if (password.length < 8) return setError('密码长度至少为8位数');
+
+        if (isDemo) {
+            // 演示模式直接放行
+            if (mode === 'register' && (!isCodeSent || !verCodeInput)) return setError('请先获取并输入验证码');
+            alert(mode === 'register' ? '演示模式：注册成功！将直接为您登录。' : '演示模式：登录成功！');
+            onLogin(email);
+            return;
+        }
+
+        try {
+          const docId = email.replace(/@/g, '_at_').replace(/\./g, '_dot_');
+          const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'yiyuan_users', docId);
+
+          if (mode === 'register') {
+            if (!isCodeSent) return setError('请先获取邮箱验证码');
+            if (!verCodeInput) return setError('请输入邮箱验证码');
+            
+            await setDoc(userRef, { password, status: 'registered', verificationCode: verCodeInput, registerTime: new Date().toISOString() }, { merge: true });
+            alert('注册成功！请使用刚注册的账号密码登录。');
+            setMode('login'); setPassword(''); setVerCodeInput(''); setIsCodeSent(false);
+          } else {
+            const snap = await getDoc(userRef);
+            if (!snap.exists() || snap.data().status !== 'registered') return setError('该账号不存在或未完成注册');
+            if (snap.data().password !== password) return setError('密码错误，请核对');
+
+            await setDoc(userRef, { lastLogin: new Date().toISOString() }, { merge: true });
+            onLogin(email);
+          }
+        } catch (err) {
+          setError('操作失败，网络或数据库连接错误');
+        }
+      };
+
+      const handleAdminAuth = () => {
+        if (adminPwd === '88888888') {
+          setShowAdminModal(false); setAdminPwd(''); onGoAdmin();
+        } else {
+          alert('管理员口令错误，禁止入内！');
+        }
+      };
+
+      return (
+        <div className="flex flex-col items-center justify-center min-h-screen p-4">
+          <div className="w-full max-w-md bg-white/85 backdrop-blur-md p-8 rounded-sm shadow-2xl border border-slate-300 relative">
+            <div className="absolute top-2 left-2 right-2 bottom-2 border border-slate-300/50 pointer-events-none"></div>
+            <div className="flex justify-center mb-6">
+              <div className="p-3 bg-red-900/10 rounded-full text-[#8b1515]"><Plane size={36} strokeWidth={1.5} /></div>
+            </div>
+            <h1 className="text-4xl font-bold text-center mb-2 tracking-widest text-slate-800">一元机场</h1>
+            <p className="text-slate-500 text-center mb-8 italic">极速·稳定·隐逸如墨</p>
+
+            <div className="flex mb-6 border-b border-slate-300">
+              <button className={`flex-1 py-3 font-bold text-lg transition-colors ${mode === 'login' ? 'text-[#8b1515] border-b-2 border-[#8b1515]' : 'text-slate-400 hover:text-slate-600'}`} onClick={() => { setMode('login'); setError(''); setPassword(''); }}>老用户登录</button>
+              <button className={`flex-1 py-3 font-bold text-lg transition-colors ${mode === 'register' ? 'text-[#8b1515] border-b-2 border-[#8b1515]' : 'text-slate-400 hover:text-slate-600'}`} onClick={() => { setMode('register'); setError(''); setPassword(''); }}>新用户注册</button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"><Mail size={16}/> 邮箱账号</label>
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="example@gmail.com" className="w-full px-4 py-3 bg-white/70 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-[#8b1515]/50 text-slate-800" />
+              </div>
+
+              {mode === 'register' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"><Fingerprint size={16}/> 邮箱验证码</label>
+                  <div className="flex gap-2">
+                    <input type="text" value={verCodeInput} onChange={(e) => setVerCodeInput(e.target.value)} placeholder="6位验证码" className="w-full px-4 py-3 bg-white/70 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-[#8b1515]/50 text-slate-800" />
+                    <button type="button" onClick={handleSendCode} disabled={isCodeSent} className={`px-4 py-3 font-bold rounded whitespace-nowrap transition-colors ${isCodeSent ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-900 text-white'}`}>{isCodeSent ? '已发送' : '获取验证码'}</button>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"><Key size={16}/> {mode === 'register' ? '设置密码 (最少8位)' : '登录密码'}</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="w-full px-4 py-3 bg-white/70 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-[#8b1515]/50 text-slate-800" />
+              </div>
+              {error && <p className="text-[#8b1515] text-sm flex items-center gap-1"><AlertCircle size={16}/>{error}</p>}
+              
+              <button type="submit" className="w-full py-3 bg-[#8b1515] hover:bg-[#660f0f] text-white font-bold rounded tracking-widest transition-colors flex items-center justify-center gap-2">
+                {mode === 'login' ? <><LogIn size={18}/> 登 录</> : <><UserPlus size={18}/> 注 册</>}
+              </button>
+            </form>
+          </div>
+          
+          <button onClick={() => setShowAdminModal(true)} className="mt-12 text-sm text-slate-600 hover:text-[#8b1515] flex items-center gap-1 transition-colors bg-white/60 px-4 py-2 rounded-full backdrop-blur-md border border-slate-300">
+            <Lock size={14} /> 管理员后台入口
+          </button>
+
+          {showAdminModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <div className="bg-[#f4f4ec] p-6 rounded border-2 border-slate-300 max-w-sm w-full shadow-2xl relative">
+                <h3 className="text-xl font-bold mb-4 text-slate-800 flex items-center gap-2"><Monitor size={20} className="text-[#8b1515]"/> 管理员验证</h3>
+                <p className="text-sm text-slate-500 mb-4">仅限网站所有者进入。(密码：88888888)</p>
+                <input type="password" value={adminPwd} onChange={(e) => setAdminPwd(e.target.value)} placeholder="输入管理员口令" className="w-full px-4 py-2 mb-4 bg-white border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-[#8b1515]" />
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setShowAdminModal(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded">取消</button>
+                  <button onClick={handleAdminAuth} className="px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-900">验证进入</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 2. 用户控制台
+    // ==========================================
+    function UserDashboard({ email, userData, onLogout, isDemo }) {
+      const [showPayment, setShowPayment] = useState(false);
+      const [selectedPlan, setSelectedPlan] = useState(null);
+      const [showSupport, setShowSupport] = useState(false);
+      const [supportMsg, setSupportMsg] = useState('');
+      const [mockStatus, setMockStatus] = useState('none');
+
+      const plans = [
+        {
+          id: 'regular', name: '常规套餐-本月限时特惠-传家宝', price: 60, countries: '80+', badge: '本月特惠', badgeColor: 'bg-[#6ebf26]',
+          features: [
+            { text: '🌊 月流量：100G' }, { text: '🌈 80+节点全球多个国家接入' }, { text: '✈️ 全部节点1倍率计费无套路' }, { text: '📺 解锁Netflix/Tiktok等流媒体' },
+            { text: '⚡ 最高速度 2000Mbps' }, { text: '✅ 同一ip网络下不限制在线设备数', className: 'text-green-700' }, { text: '✅ 不同ip网络同时最大在线ip数为5', className: 'text-green-700' },
+            { text: '㊙️ 全新Meta内核加密更安全', className: 'text-green-700 font-bold' }, { text: '⚠️ 请知悉无退款服务', className: 'text-orange-500' }, { text: '🔧 免配置傻瓜式操作客户端', className: 'text-green-700 font-bold' },
+            { text: '🔥 年付60元，畅爽冲浪', className: 'text-red-600 font-bold' }, { text: '不包含Premium系列顶级专线', className: 'text-red-600 font-bold' }
+          ], buttonText: '立即订阅'
+        },
+        {
+          id: 'premium', name: 'Premium-顶级超高端商用专线', price: 350, countries: '120+', badge: '高端爆款', badgeColor: 'bg-[#b91c1c]',
+          features: [
+            { text: '🌊 月流量：100G' }, { text: '🌈 某昔150r/月同款超精商用级线路', className: 'text-red-600 font-bold' }, { text: '✈️ 全部节点1倍率计费无套路' }, { text: '📺 解锁Netflix/Tiktok等流媒体' },
+            { text: '⚡ 无限制最高速度，抢票必备！' }, { text: '✅ 不限制同时连接设备数，线路与常规套餐完全独立', className: 'text-green-700 font-bold' }, { text: '㊙️ 商业版Soga内核带来超凡体验', className: 'text-pink-600 font-bold' },
+            { text: '⚠️ 请知悉无退款服务', className: 'text-orange-500' }, { text: '🔧 免配置傻瓜式操作客户端', className: 'text-green-700 font-bold' }, { text: '🔥 行业最顶级专线，全时段无缝翻墙体验，爽到停不下来', className: 'text-red-600 font-bold' },
+            { text: '全Premium系列顶级专线', className: 'text-orange-500 font-bold' }
+          ], buttonText: '立即订阅'
+        }
+      ];
+
+      const handleSelectPlan = (plan) => { setSelectedPlan(plan); setShowPayment(true); };
+
+      const handlePaymentComplete = async () => {
+        if (isDemo) {
+            setMockStatus('paid');
+            setShowPayment(false);
+            return alert('【UI展示模式】已模拟付款完成！');
+        }
+        try {
+            const docId = email.replace(/@/g, '_at_').replace(/\./g, '_dot_');
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'yiyuan_users', docId);
+            await setDoc(userRef, { plan: selectedPlan.name, paymentStatus: 'paid' }, { merge: true });
+            setShowPayment(false);
+        } catch (e) { alert('付款状态更新失败，请重试'); }
+      };
+
+      const handleSendSupport = async () => {
+        if (!supportMsg.trim()) return;
+        if (isDemo) {
+            setSupportMsg(''); setShowSupport(false);
+            return alert('【UI展示模式】留言已模拟发送！');
+        }
+        try {
+            const docId = email.replace(/@/g, '_at_').replace(/\./g, '_dot_');
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'yiyuan_users', docId);
+            await setDoc(userRef, { messages: arrayUnion({ text: supportMsg, time: new Date().toISOString() }) }, { merge: true });
+            setSupportMsg(''); alert('留言已发送至后台！'); setShowSupport(false);
+        } catch(e) { alert('留言发送失败'); }
+      };
+
+      const status = isDemo ? mockStatus : (userData?.paymentStatus || 'none');
+      const nodes = isDemo ? null : userData?.nodes;
+
+      return (
+        <div className="max-w-6xl mx-auto p-6 relative">
+          <header className="flex justify-between items-center py-6 border-b-2 border-slate-300 mb-8 bg-white/60 backdrop-blur-md px-6 rounded-sm shadow-sm">
+            <div className="flex items-center gap-3"><Plane className="text-[#8b1515]" size={28} /><h1 className="text-2xl font-bold tracking-widest">一元机场 <span className="text-sm font-normal text-slate-600 ml-2">行者简册</span></h1></div>
+            <div className="flex items-center gap-4">
+              <button onClick={() => setShowSupport(true)} className="flex items-center gap-1 text-slate-600 hover:text-[#8b1515] bg-white/50 px-3 py-1.5 rounded-full transition-colors text-sm font-bold shadow-sm border border-slate-200"><Headset size={16} /> 客服连线</button>
+              <div className="text-sm text-slate-700 flex items-center gap-2 font-medium"><Mail size={16}/> {email}</div>
+              <button onClick={onLogout} className="text-slate-600 hover:text-[#8b1515] p-2 rounded-lg hover:bg-white/50 transition-colors"><LogOut size={20} /></button>
+            </div>
+          </header>
+
+          {status === 'paid' && !nodes && (
+            <div className="bg-white/85 backdrop-blur-md border border-slate-300 p-6 rounded-sm mb-8 flex items-center justify-between shadow-lg">
+              <div><h2 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2"><span className="w-2 h-2 bg-[#8b1515] rounded-full animate-ping"></span> 线路正在开通...</h2><p className="text-slate-600">阁下已成功支付，系统正在为您调配专属节点，请稍候。</p></div>
+              <Shield className="text-slate-300" size={48} />
+            </div>
+          )}
+
+          {status === 'paid' && nodes && (
+            <div className="bg-white/90 backdrop-blur-md border-t-4 border-[#8b1515] p-8 rounded-sm mb-8 shadow-xl">
+              <div className="flex items-center gap-3 mb-6"><div className="p-2 bg-[#8b1515]/10 rounded-full"><Check className="text-[#8b1515]" size={28} /></div><h2 className="text-2xl font-bold text-slate-800">线路已就绪</h2></div>
+              <div className="bg-[#f8f8f4] p-6 rounded border border-slate-200 font-mono text-sm text-slate-700 whitespace-pre-wrap break-all shadow-inner">{nodes}</div>
+            </div>
+          )}
+
+          {(status === 'none' || status === 'pending') && (
+            <div>
+              <div className="text-center mb-12"><h2 className="text-3xl font-bold mb-4 tracking-widest text-slate-800 drop-shadow-sm">选择您的远行凭证</h2></div>
+              <div className="grid md:grid-cols-2 gap-10 max-w-4xl mx-auto">
+                {plans.map(plan => (
+                  <div key={plan.id} className={`bg-white/85 backdrop-blur-md rounded-sm p-8 border-2 transition-all hover:-translate-y-1 shadow-xl relative flex flex-col ${plan.id === 'premium' ? 'border-[#8b1515]' : 'border-slate-300 hover:border-slate-400'}`}>
+                    <h3 className="text-2xl font-bold mb-2 tracking-wider text-slate-800">{plan.name}</h3>
+                    <div className="flex items-end gap-1 mb-6 border-b border-slate-200 pb-4"><span className="text-4xl font-black text-[#8b1515]">¥{plan.price}</span><span className="text-slate-500 mb-1">/ 年</span></div>
+                    <ul className="space-y-2 mb-6 text-[15px] leading-relaxed flex-1">
+                      {plan.features.map((feat, idx) => (<li key={idx} className={`${feat.className || 'text-slate-700'}`}>{feat.text}</li>))}
+                    </ul>
+                    {plan.badge && <div className={`w-full ${plan.badgeColor} text-white font-bold px-3 py-2 mb-4 text-sm text-center shadow-sm`}>{plan.badge}</div>}
+                    <button onClick={() => handleSelectPlan(plan)} className={`w-full py-4 rounded font-bold tracking-widest transition-colors ${plan.id === 'premium' ? 'bg-[#8b1515] hover:bg-[#660f0f] text-white' : 'bg-slate-800 hover:bg-slate-900 text-white'}`}>{plan.buttonText}</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showPayment && selectedPlan && (
+            <div className="fixed inset-0 bg-slate-900/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+              <div className="bg-[#f4f4ec] text-slate-900 w-full max-w-sm rounded-sm overflow-hidden shadow-2xl border-2 border-slate-400 relative">
+                <div className="bg-[#1677FF] p-6 text-white text-center"><div className="flex items-center justify-center gap-2 mb-2"><QrCode size={24} /><span className="text-xl font-bold tracking-wider">支付宝扫码付款</span></div></div>
+                <div className="p-8 flex flex-col items-center">
+                  <div className="text-center mb-6"><p className="text-sm text-slate-500 mb-1">您正在购买</p><p className="text-xl font-bold tracking-wider">{selectedPlan.name}</p><p className="text-4xl font-black text-[#1677FF] mt-2">¥{selectedPlan.price}</p></div>
+                  <div className="w-56 h-56 bg-white overflow-hidden rounded-xl border-4 border-slate-200 mb-4 relative shadow-inner flex items-center justify-center">
+                    <img src={selectedPlan.id === 'regular' ? "1777191511387.jpg" : "1777191520591.jpg"} className="w-full h-full object-cover" style={{ transform: 'scale(2.1) translateY(-5%)' }}/>
+                  </div>
+                  <div className="w-full space-y-3">
+                    <button onClick={handlePaymentComplete} className="w-full py-3 bg-[#1677FF] text-white font-bold rounded shadow-md">我已扫码付款</button>
+                    <button onClick={() => setShowPayment(false)} className="w-full py-3 bg-white border border-slate-300 text-slate-600 font-bold rounded">暂不支付</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showSupport && (
+            <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+              <div className="bg-[#f4f4ec] w-full max-w-md rounded shadow-2xl border border-slate-400 relative p-6">
+                <button onClick={() => setShowSupport(false)} className="absolute top-4 right-4 text-slate-500 hover:text-slate-800"><X size={20} /></button>
+                <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-slate-800"><Headset className="text-[#8b1515]"/> 在线客服留言</h3>
+                <textarea value={supportMsg} onChange={(e) => setSupportMsg(e.target.value)} placeholder="请输入您的反馈或问题..." className="w-full h-32 bg-white border border-slate-300 rounded p-3 text-slate-800 mb-4 resize-none shadow-inner"></textarea>
+                <button onClick={handleSendSupport} className="w-full py-2.5 bg-[#8b1515] text-white font-bold rounded shadow-md flex items-center justify-center gap-2"><Send size={16} /> 发送留言</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 3. 管理员后台系统 (演示模式直接展示假数据)
+    // ==========================================
+    function AdminDashboard({ users, onExit }) {
+      return (
+        <div className="min-h-screen bg-[#e8e8e0] font-serif">
+          <header className="bg-slate-800 text-white px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-md">
+            <div className="flex items-center gap-3"><Monitor className="text-slate-300" size={24} /><h1 className="text-xl font-bold tracking-widest">机场后台管理中枢</h1></div>
+            <button onClick={onExit} className="flex items-center gap-2 text-slate-300 hover:text-white px-4 py-2 rounded bg-slate-700"><LogOut size={16} /> 退回大厅</button>
+          </header>
+          <div className="p-6 max-w-7xl mx-auto mt-6">
+            <div className="bg-white/90 backdrop-blur-md rounded shadow-xl border border-slate-300 overflow-hidden">
+              <div className="p-10 text-center">
+                <h2 className="text-2xl font-bold text-slate-800 mb-4">欢迎进入后台管理界面</h2>
+                <p className="text-slate-600">由于当前未配置真实数据库，无法展示实际注册用户的列表。</p>
+                <p className="text-slate-600 mt-2">当您在代码第42行填写真实的 Firebase 配置后，这里将自动恢复为您之前的真实名册表格功能！</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
